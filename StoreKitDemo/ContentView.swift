@@ -10,6 +10,8 @@ import StoreKit
 
 struct ContentView: View {
     @StateObject var storeKit = StoreKitManager.shared
+    @State private var toast: ToastData?
+    @State private var isProcessing = false
     
     var body: some View {
         Group {
@@ -36,6 +38,11 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(backgroundColor)
         .task { await storeKit.requestProducts() }
+        .overlay(alignment: .top) {
+            ToastView(toast: toast)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+        }
     }
 
     private var header: some View {
@@ -108,12 +115,15 @@ struct ContentView: View {
     private var actionsCard: some View {
         sectionCard(title: "操作") {
             Button {
-                Task { await storeKit.restorePurchases() }
+                runFlowWithToast(loadingText: "正在恢复购买...") {
+                    await storeKit.restorePurchases()
+                }
             } label: {
                 Label("恢复购买 (Restore)", systemImage: "arrow.uturn.left")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(isProcessing)
         }
     }
 
@@ -156,9 +166,12 @@ struct ContentView: View {
         if product.type == .consumable {
             // 消耗型：永远显示价格，可以重复买
             Button(product.displayPrice) {
-                Task { await storeKit.purchase(product) }
+                runFlowWithToast(loadingText: "正在购买 \(product.displayName)...") {
+                    await storeKit.purchase(product)
+                }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(isProcessing)
             
         } else {
             // 非消耗/订阅：如果买过，显示“已拥有”
@@ -173,9 +186,12 @@ struct ContentView: View {
                     )
             } else {
                 Button(product.displayPrice) {
-                    Task { await storeKit.purchase(product) }
+                    runFlowWithToast(loadingText: "正在购买 \(product.displayName)...") {
+                        await storeKit.purchase(product)
+                    }
                 }
                 .buttonStyle(.bordered)
+                .disabled(isProcessing)
             }
         }
     }
@@ -202,6 +218,43 @@ struct ContentView: View {
         #else
         Color(.separator)
         #endif
+    }
+
+    // MARK: - Toast & Flow Helpers
+    private func runFlowWithToast(loadingText: String, action: @escaping () async -> FlowResult) {
+        isProcessing = true
+        showToast(message: loadingText, style: .loading, autoHide: false)
+        Task {
+            let result = await action()
+            await MainActor.run {
+                isProcessing = false
+                switch result {
+                case .success(let message):
+                    showToast(message: message, style: .success)
+                case .failure(let message):
+                    showToast(message: message, style: .failure)
+                case .cancelled(let message):
+                    showToast(message: message, style: .info)
+                case .pending(let message):
+                    showToast(message: message, style: .info)
+                }
+            }
+        }
+    }
+
+    private func showToast(message: String, style: ToastStyle, autoHide: Bool = true) {
+        let data = ToastData(message: message, style: style)
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+            toast = data
+        }
+        guard autoHide else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) {
+            if toast?.id == data.id {
+                withAnimation(.easeOut(duration: 0.22)) {
+                    toast = nil
+                }
+            }
+        }
     }
 }
 

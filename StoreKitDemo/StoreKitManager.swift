@@ -14,6 +14,21 @@ enum StoreError: Error {
     case failedVerification
 }
 
+// 统一的购买/恢复结果，便于 UI 显示 Toast
+enum FlowResult {
+    case success(String)
+    case failure(String)
+    case cancelled(String)
+    case pending(String)
+
+    var message: String {
+        switch self {
+        case .success(let msg), .failure(let msg), .cancelled(let msg), .pending(let msg):
+            return msg
+        }
+    }
+}
+
 // 定义商品 ID，必须和 .storekit 文件里的一致
 enum ProductID: String, CaseIterable {
     case lifetime = "com.myapp.lifetime"    // 非消耗型
@@ -50,6 +65,7 @@ class StoreKitManager: ObservableObject {
     
     // MARK: - 1. 获取商品
     func requestProducts() async {
+        log("开始请求商品列表: \(ProductID.allCases.map { $0.rawValue }.joined(separator: ", "))")
         do {
             let productIDs = Set(ProductID.allCases.map { $0.rawValue })
             
@@ -60,13 +76,13 @@ class StoreKitManager: ObservableObject {
             self.products = products.sorted(by: { $0.price < $1.price })
             
             for product in self.products {
-                print("查找到商品: \(product.displayName) - \(product.displayPrice)")
+                log("查找到商品: \(product.displayName) - \(product.displayPrice)")
             }
             
             // 加载完商品后，立即检查用户当前的购买状态
             await updateCustomerProductStatus()
         } catch {
-            print("获取商品失败: \(error)")
+            log("获取商品失败: \(error)")
         }
     }
     
@@ -74,7 +90,9 @@ class StoreKitManager: ObservableObject {
     
     /// 购买指定商品
     /// - Parameter product: 商品对象
-    func purchase(_ product: Product) async {
+    @discardableResult
+    func purchase(_ product: Product) async -> FlowResult {
+        log("准备购买商品: \(product.displayName) (\(product.id))，价格 \(product.displayPrice)")
         do {
             // 发起购买请求
             let result = try await product.purchase()
@@ -83,23 +101,30 @@ class StoreKitManager: ObservableObject {
             switch result {
             case .success(let verification):
                 // 购买成功，需验证交易
+                log("购买成功返回，开始校验凭证...")
                 let transaction = try checkVerified(verification)
+                log("校验通过，交易 ID: \(transaction.originalID)")
                 
                 // 发放权益
                 await updatePurchasedStatus(transaction)
                 
                 // 告诉苹果交易完成
                 await transaction.finish()
-                
+                log("已完成交易并上报 finish")
+                return .success("购买成功")
             case .userCancelled:
-                print("用户取消了支付")
+                log("用户取消了支付")
+                return .cancelled("用户取消")
             case .pending:
-                print("交易挂起 (如家长控制)")
+                log("交易挂起 (如家长控制)")
+                return .pending("交易挂起")
             @unknown default:
-                print("未知状态")
+                log("未知状态")
+                return .failure("未知状态")
             }
         } catch {
-            print("购买失败: \(error)")
+            log("购买失败: \(error)")
+            return .failure("购买失败: \(error.localizedDescription)")
         }
     }
     
@@ -117,10 +142,10 @@ class StoreKitManager: ObservableObject {
                     
                     // 结束交易 (如果不 finish，下次启动还会收到)
                     await transaction.finish()
-                    
-                    print("✅ 收到并处理了交易: \(transaction.productID)")
+
+                    self.log("监听到交易更新并已处理: \(transaction.productID)")
                 } catch {
-                    print("监听到的交易验证失败")
+                    self.log("监听到的交易验证失败: \(error)")
                 }
             }
         }
@@ -145,15 +170,18 @@ class StoreKitManager: ObservableObject {
                     await checkSubscriptionDetails(transaction)
                 }
             } catch {
-                print("权益验证失败")
+                log("权益验证失败: \(error)")
             }
         }
         
         self.purchasedProductIDs = purchasedIds
+        log("当前有效权益: \(purchasedIds.joined(separator: ", "))")
     }
     
     // 手动强制恢复
-    func restorePurchases() async {
+    @discardableResult
+    func restorePurchases() async -> FlowResult {
+        log("开始恢复购买")
         do {
             // 1. 强制同步 App Store 交易记录
             // 这可能会提示用户输入 Apple ID 密码
@@ -163,9 +191,11 @@ class StoreKitManager: ObservableObject {
             await updateCustomerProductStatus()
 
             // 3. UI 提示
-            print("Restore completed successfully")
+            log("Restore completed successfully")
+            return .success("恢复成功")
         } catch {
-            print("Restore failed: \(error)")
+            log("Restore failed: \(error)")
+            return .failure("恢复失败: \(error.localizedDescription)")
         }
     }
     
@@ -191,12 +221,13 @@ class StoreKitManager: ObservableObject {
             // ⚠️ 真实项目中，这里应该把 transactionID 发给服务器做校验，由服务器加币
             // 本地简单的防重处理可以基于 transaction.id
             coinBalance += 100
-            print("金币 +100")
+            log("消耗型商品到账，金币 +100，交易 ID: \(transaction.id)")
         } else {
             // 非消耗型 / 订阅
             if transaction.revocationDate == nil {
                 // 正常购买
                 purchasedProductIDs.insert(transaction.productID)
+                log("已激活商品: \(transaction.productID)")
                 if transaction.productType == .autoRenewable {
                     await checkSubscriptionDetails(transaction)
                 }
@@ -204,6 +235,7 @@ class StoreKitManager: ObservableObject {
                 // 被退款/撤销了
                 purchasedProductIDs.remove(transaction.productID)
                 subscriptionStatus = "已退款/撤销"
+                log("交易已撤销: \(transaction.productID)")
             }
         }
     }
@@ -234,7 +266,7 @@ class StoreKitManager: ObservableObject {
             self.subscriptionStatus = "\(statusText) - \(autoRenewText)"
             
         } catch {
-            print("无法获取订阅详情")
+            log("无法获取订阅详情: \(error)")
         }
     }
     
@@ -249,13 +281,22 @@ class StoreKitManager: ObservableObject {
 
             if isEligible {
                 if introOffer.paymentMode == .freeTrial {
-                    print("免费试用 \(introOffer.period.value) \(introOffer.period.unit.localizedDescription)")
+                    log("免费试用 \(introOffer.period.value) \(introOffer.period.unit)")
                 } else {
-                    print("首月仅需: \(introOffer.price)")
+                    log("首月仅需: \(introOffer.price)")
                 }
             } else {
-                print("原价: \(product.price)")
+                log("原价: \(product.price)")
             }
         }
+    }
+
+    // MARK: - 6. 日志工具
+    nonisolated private func log(_ message: String) {
+        // 独立于 MainActor，便于在后台 Task.detached 中调用
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        let time = formatter.string(from: Date())
+        print("[StoreKit] [\(time)] \(message)")
     }
 }
