@@ -1,0 +1,116 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "FFBC85C1",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "AC0F0841",
+      "localizations" : [
+        {
+          "description" : "购买后，您将得到 100 金币",
+          "displayName" : "100 金币",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.myapp.coin.100",
+      "referenceName" : "100 Coins",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "0BCF3BD2",
+      "localizations" : [
+        {
+          "description" : "一次购买，永久拥有",
+          "displayName" : "终身会员",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.myapp.lifetime",
+      "referenceName" : "Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "E153A563",
+      "localizations" : [
+
+      ],
+      "name" : "Subscription",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+            {
+              "eligibility" : [
+                "expired",
+                "new",
+                "existing"
+              ],
+              "internalID" : "CA9F74B8",
+              "isStackable" : true,
+              "paymentMode" : "free",
+              "referenceName" : "3 天免费促销",
+              "subscriptionPeriod" : "P3D"
+            }
+          ],
+          "displayPrice" : "0.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "4D6DA8C9",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "订阅一个月，到期自动续费",
+              "displayName" : "月卡",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.myapp.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Monthly Sub",
+          "subscriptionGroupID" : "E153A563",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}
