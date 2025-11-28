@@ -32,11 +32,6 @@ class StoreKitManager: ObservableObject {
     @Published var coinBalance: Int = 0 // 消耗品余额模拟
     @Published var subscriptionStatus: String = "无订阅" // 订阅详细状态
     
-    /// 订阅用户或者终身版都视为 Pro 用户
-    var isPro: Bool {
-        return purchasedProductIDs.contains(ProductID.monthly.rawValue) || purchasedProductIDs.contains(ProductID.lifetime.rawValue)
-    }
-    
     private var updatesTask: Task<Void, Never>? = nil
     
     private init() {
@@ -46,6 +41,11 @@ class StoreKitManager: ObservableObject {
     
     deinit {
         updatesTask?.cancel()
+    }
+    
+    /// 订阅用户或者终身版都视为 Pro 用户
+    var isPro: Bool {
+        return purchasedProductIDs.contains(ProductID.monthly.rawValue) || purchasedProductIDs.contains(ProductID.lifetime.rawValue)
     }
     
     // MARK: - 1. 获取商品
@@ -63,7 +63,7 @@ class StoreKitManager: ObservableObject {
                 print("查找到商品: \(product.displayName) - \(product.displayPrice)")
             }
             
-            // 加载完商品后，顺便检查一下用户当前的权益（恢复购买）
+            // 加载完商品后，立即检查用户当前的购买状态
             await updateCustomerProductStatus()
         } catch {
             print("获取商品失败: \(error)")
@@ -71,14 +71,18 @@ class StoreKitManager: ObservableObject {
     }
     
     // MARK: - 2. 发起购买
+    
+    /// 购买指定商品
+    /// - Parameter product: 商品对象
     func purchase(_ product: Product) async {
         do {
-            // 发起支付
+            // 发起购买请求
             let result = try await product.purchase()
             
+            // 处理购买结果
             switch result {
             case .success(let verification):
-                // 验证并处理交易
+                // 购买成功，需验证交易
                 let transaction = try checkVerified(verification)
                 
                 // 发放权益
@@ -111,7 +115,10 @@ class StoreKitManager: ObservableObject {
                     // 必须确保逻辑幂等，不要重复发金币
                     await self.updatePurchasedStatus(transaction)
                     
+                    // 结束交易 (如果不 finish，下次启动还会收到)
                     await transaction.finish()
+                    
+                    print("✅ 收到并处理了交易: \(transaction.productID)")
                 } catch {
                     print("监听到的交易验证失败")
                 }
@@ -124,11 +131,13 @@ class StoreKitManager: ObservableObject {
     func updateCustomerProductStatus() async {
         var purchasedIds: Set<String> = []
         
-        // currentEntitlements 只包含：非消耗型 + 有效的订阅
+        // 遍历用户当前的 entitlements (即所有有效的、未退款的交易) 只包含：非消耗型 + 有效的订阅
         // 不包含：消耗型 (金币)、已过期的订阅、已退款的交易
         for await result in Transaction.currentEntitlements {
             do {
                 let transaction = try checkVerified(result)
+                
+                // 标记为已购买
                 purchasedIds.insert(transaction.productID)
                 
                 // 如果是订阅，顺便检查下详细状态（是否取消了自动续费等）
@@ -162,14 +171,14 @@ class StoreKitManager: ObservableObject {
     
     // MARK: - 5. 内部逻辑：验证与发货
     
-    // JWS 签名验证助手
+    // 验证交易真实性
     private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
         switch result {
-        case .unverified(_, let error):
+        case .unverified:
             // 验证失败（可能是盗版或证书不对），抛出错误，不给权益
-            throw error
+            throw StoreError.failedVerification
         case .verified(let safe):
-            // ✅ 验证通过，返回解包后的数据
+            // 验证成功，返回安全的交易对象
             return safe
         }
     }
@@ -226,6 +235,27 @@ class StoreKitManager: ObservableObject {
             
         } catch {
             print("无法获取订阅详情")
+        }
+    }
+    
+    // 检查是否有优惠
+    func checkIntroOffer(for product: Product) async {
+        if let subscription = product.subscription,
+           let introOffer = subscription.introductoryOffer {
+
+            // 检查用户是否有资格享受这个优惠
+            // StoreKit 2 会自动根据用户历史判断 isEligible
+            let isEligible = await subscription.isEligibleForIntroOffer
+
+            if isEligible {
+                if introOffer.paymentMode == .freeTrial {
+                    print("免费试用 \(introOffer.period.value) \(introOffer.period.unit.localizedDescription)")
+                } else {
+                    print("首月仅需: \(introOffer.price)")
+                }
+            } else {
+                print("原价: \(product.price)")
+            }
         }
     }
 }
