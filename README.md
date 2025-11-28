@@ -9,7 +9,7 @@
 
 [Apple StoreKit 2 开发指南](https://juejin.cn/post/7577215663968190506) 文章的演示 Demo. 实际运行效果如下：
 
-![ScreenShot](./Images/screenshot.png)
+<img src="./Images/screenshot.png" width="50%" alt="ScreenShot" />
 
 ## 功能
 
