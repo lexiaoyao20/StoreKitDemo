@@ -72,24 +72,17 @@
 
           ],
           "codeOffers" : [
-            {
-              "eligibility" : [
-                "expired",
-                "new",
-                "existing"
-              ],
-              "internalID" : "CA9F74B8",
-              "isStackable" : true,
-              "paymentMode" : "free",
-              "referenceName" : "3 天免费促销",
-              "subscriptionPeriod" : "P3D"
-            }
+
           ],
           "displayPrice" : "0.99",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "4D6DA8C9",
-          "introductoryOffer" : null,
+          "introductoryOffer" : {
+            "internalID" : "DF91CF33",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
           "localizations" : [
             {
               "description" : "订阅一个月，到期自动续费",

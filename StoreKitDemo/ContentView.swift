@@ -135,6 +135,7 @@ struct ContentView: View {
                 Text(product.description)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                promoInfo(for: product)
             }
             Spacer()
             buyButton(for: product)
@@ -254,6 +255,67 @@ struct ContentView: View {
                     toast = nil
                 }
             }
+        }
+    }
+
+    // 推介/体验优惠展示
+    @ViewBuilder
+    private func promoInfo(for product: Product) -> some View {
+        if let promo = product.subscription?.promotionalOffers.first {
+            HStack(spacing: 6) {
+                Image(systemName: "tag.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text("推介优惠: \(promo.displayPrice) • \(periodText(promo.period, count: promo.periodCount))")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        } else if let intro = product.subscription?.introductoryOffer {
+            let eligible = storeKit.introOfferEligibility[product.id] ?? true
+            if eligible {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    Text(introText(intro))
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("体验优惠已使用")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func periodText(_ period: Product.SubscriptionPeriod, count: Int) -> String {
+        let unit: String
+        switch period.unit {
+        case .day: unit = "天"
+        case .week: unit = "周"
+        case .month: unit = "月"
+        case .year: unit = "年"
+        @unknown default: unit = "周期"
+        }
+        return count > 1 ? "\(count)\(unit)" : unit
+    }
+
+    private func introText(_ intro: Product.SubscriptionOffer) -> String {
+        switch intro.paymentMode {
+        case .freeTrial:
+            return "免费试用 \(intro.period.value) \(periodText(intro.period, count: intro.periodCount))"
+        case .payUpFront:
+            return "首期 \(intro.displayPrice) • \(periodText(intro.period, count: intro.periodCount))"
+        case .payAsYouGo:
+            return "优惠价 \(intro.displayPrice)/\(periodText(intro.period, count: 1)) 共 \(intro.periodCount) 期"
+        default:
+            return "体验优惠"
         }
     }
 }

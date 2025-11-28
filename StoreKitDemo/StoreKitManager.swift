@@ -46,6 +46,7 @@ class StoreKitManager: ObservableObject {
     @Published var purchasedProductIDs = Set<String>() // 已买过的 ID (非消耗/订阅)
     @Published var coinBalance: Int = 0 // 消耗品余额模拟
     @Published var subscriptionStatus: String = "无订阅" // 订阅详细状态
+    @Published var introOfferEligibility: [String: Bool] = [:] // 订阅体验/首购优惠资格缓存
     
     private var updatesTask: Task<Void, Never>? = nil
     
@@ -77,6 +78,7 @@ class StoreKitManager: ObservableObject {
             
             for product in self.products {
                 log("查找到商品: \(product.displayName) - \(product.displayPrice)")
+                await updateIntroEligibility(for: product)
             }
             
             // 加载完商品后，立即检查用户当前的购买状态
@@ -103,7 +105,7 @@ class StoreKitManager: ObservableObject {
                 // 购买成功，需验证交易
                 log("购买成功返回，开始校验凭证...")
                 let transaction = try checkVerified(verification)
-                log("校验通过，交易 ID: \(transaction.originalID)")
+                log("校验通过，交易 ID: \(transaction.id)")
                 
                 // 发放权益
                 await updatePurchasedStatus(transaction)
@@ -288,6 +290,17 @@ class StoreKitManager: ObservableObject {
             } else {
                 log("原价: \(product.price)")
             }
+        }
+    }
+
+    // 缓存体验/首购优惠资格，供 UI 使用
+    private func updateIntroEligibility(for product: Product) async {
+        guard let subscription = product.subscription,
+              subscription.introductoryOffer != nil else { return }
+        let eligible = await subscription.isEligibleForIntroOffer
+        await MainActor.run {
+            introOfferEligibility[product.id] = eligible
+            log("Intro offer eligibility for \(product.id): \(eligible)")
         }
     }
 
