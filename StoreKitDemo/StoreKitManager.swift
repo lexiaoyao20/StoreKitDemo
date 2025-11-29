@@ -32,7 +32,27 @@ enum FlowResult {
 // 定义商品 ID，必须和 .storekit 文件里的一致
 enum ProductID: String, CaseIterable {
     case lifetime = "com.myapp.lifetime"    // 非消耗型
-    case monthly  = "com.myapp.pro.monthly" // 订阅
+    /*
+     注意下面两个订阅方式：月付和年付，它们属于同一个订阅组，必须将 Subscription Level 设置为不同的值
+     Subscription Level（订阅等级）的数字越小，优先级越高。
+     如果用户 从 Level 2（月付）转去 Level 1（年付），这在 Apple 的定义中属于 升级（Upgrade）。
+     
+     这种情况下订阅会发生什么变化呢？
+     当用户在 同一个订阅组 内，从低等级（Level 2）切换到高等级（Level 1）时，会发生以下行为：
+     1.立即生效：用户的“按月订阅”会立即停止，用户的“按年订阅”会立即开始。
+     2.按比例退款：Apple 会自动计算“按月订阅”中剩余未使用的天数，并将这部分的钱退还给用户（通常是原路退回）。
+     3.全额扣款：用户会被立即扣除“按年订阅”的全额费用。
+     4.周期重置：订阅的续期日期（Renewal Date）会更新。比如今天是 11月29日，用户操作了升级，那么新的到期日就是明年的 11月29日。
+     总结：用户现在的状态是“按年订阅”生效中，“按月订阅”已失效。用户获得了无缝的权益升级体验。
+     
+     开发过程总要如何处理这种情况：
+     - 当用户在 App 内或系统设置里完成购买后，你的 Transaction.updates 监听器会收到一个新的 Transaction。
+     - 你需要调用 Transaction.currentEntitlements。由于这两个商品在同一个订阅组，currentEntitlements 只会返回最新的那个（即 Level 1 的年付订阅）。
+     - 代码逻辑：获取最新 Transaction -> 验证 -> 解锁 Level 1 对应的功能 -> 更新 UI 显示“年费会员”。
+     */
+    case monthly  = "com.myapp.pro.monthly" // 按月订阅，Level 2
+    case yearly   = "com.myapp.pro.yearly"  // 按年订阅, Level 1
+    
     case coins    = "com.myapp.coin.100"    // 消耗型
 }
 
@@ -61,7 +81,7 @@ class StoreKitManager: ObservableObject {
     
     /// 订阅用户或者终身版都视为 Pro 用户
     var isPro: Bool {
-        return purchasedProductIDs.contains(ProductID.monthly.rawValue) || purchasedProductIDs.contains(ProductID.lifetime.rawValue)
+        return purchasedProductIDs.contains(ProductID.monthly.rawValue) || purchasedProductIDs.contains(ProductID.yearly.rawValue) || purchasedProductIDs.contains(ProductID.lifetime.rawValue)
     }
     
     // MARK: - 1. 获取商品
@@ -107,8 +127,8 @@ class StoreKitManager: ObservableObject {
                 let transaction = try checkVerified(verification)
                 log("校验通过，交易 ID: \(transaction.id)")
                 
-                // 发放权益
-                await updatePurchasedStatus(transaction)
+                // 购买成功后，统一调用处理逻辑
+                await handleTransaction(transaction)
                 
                 // 告诉苹果交易完成
                 await transaction.finish()
@@ -130,6 +150,23 @@ class StoreKitManager: ObservableObject {
         }
     }
     
+    private func handleTransaction(_ transaction: Transaction) async {
+        if transaction.productType == .consumable {
+            // 【情况 A】：消耗型商品 (金币)
+            // 消耗型商品是“一次性”的，不会存在于 currentEntitlements 中
+            // 所以我们必须在这里手动处理计数
+            // 建议：真实项目中应记录 transaction.id 防止重复加币
+            coinBalance += 100
+            log("金币到账 +100")
+        } else {
+            // 【情况 B】：订阅 或 非消耗型 (永久版)
+            // ⚠️ 关键点：不要只是 insert 进去，而是触发“全量刷新”
+            // 当用户从月付升级到年付，Apple 的 currentEntitlements 会自动把月付去掉，只留年付
+            // 所以我们重新拉取一次，就能得到正确的唯一状态。
+            await updateCustomerProductStatus()
+        }
+    }
+    
     // MARK: - 3. 监听交易更新 (核心)
     // 处理应用外购买、自动续费、退款等情况
     private func listenForTransactions() -> Task<Void, Never> {
@@ -138,9 +175,8 @@ class StoreKitManager: ObservableObject {
                 do {
                     let transaction = try await self.checkVerified(result)
                     
-                    // ⚠️ 注意：消耗型商品 (Consumable) 也会在这里回调
-                    // 必须确保逻辑幂等，不要重复发金币
-                    await self.updatePurchasedStatus(transaction)
+                    // 监听到变化，交给统一处理方法
+                    await self.handleTransaction(transaction)
                     
                     // 结束交易 (如果不 finish，下次启动还会收到)
                     await transaction.finish()
@@ -156,18 +192,29 @@ class StoreKitManager: ObservableObject {
     // MARK: - 4. 恢复购买 / 检查当前权益
     // 只要调用这个，就能把用户拥有的非消耗品和订阅刷出来
     func updateCustomerProductStatus() async {
-        var purchasedIds: Set<String> = []
+        var activePurchasedIds: Set<String> = []
         
-        // 遍历用户当前的 entitlements (即所有有效的、未退款的交易) 只包含：非消耗型 + 有效的订阅
-        // 不包含：消耗型 (金币)、已过期的订阅、已退款的交易
+        // 遍历 Apple 认为当前有效的权益
         for await result in Transaction.currentEntitlements {
             do {
                 let transaction = try checkVerified(result)
                 
-                // 标记为已购买
-                purchasedIds.insert(transaction.productID)
+                // 如果该交易已经被升级（即用户买了更高级别的订阅），则忽略旧的订阅
+                if transaction.isUpgraded {
+                    log("忽略已升级的旧订阅: \(transaction.productID)")
+                    continue
+                }
                 
-                // 如果是订阅，顺便检查下详细状态（是否取消了自动续费等）
+                // 如果交易已撤销（例如被升级覆盖、被退款），则跳过
+                if let revocationDate = transaction.revocationDate, revocationDate < Date() {
+                    log("该权益已被撤销/升级覆盖: \(transaction.productID)")
+                    continue
+                }
+                
+                // 1. 放入临时集合
+                activePurchasedIds.insert(transaction.productID)
+                
+                // 2. 更新详细状态文案 (如果有多个订阅组，这里只会拿到每个组生效的那个)
                 if transaction.productType == .autoRenewable {
                     await checkSubscriptionDetails(transaction)
                 }
@@ -176,8 +223,14 @@ class StoreKitManager: ObservableObject {
             }
         }
         
-        self.purchasedProductIDs = purchasedIds
-        log("当前有效权益: \(purchasedIds.joined(separator: ", "))")
+        self.purchasedProductIDs = activePurchasedIds
+        
+        // 如果集合是空的，重置状态文案
+        if self.purchasedProductIDs.isEmpty {
+            self.subscriptionStatus = "无订阅"
+        }
+        
+        log("权益已刷新，当前生效: \(activePurchasedIds.joined(separator: ", "))")
     }
     
     // 手动强制恢复
@@ -212,33 +265,6 @@ class StoreKitManager: ObservableObject {
         case .verified(let safe):
             // 验证成功，返回安全的交易对象
             return safe
-        }
-    }
-    
-    // 更新本地状态 (发货)
-    @MainActor
-    private func updatePurchasedStatus(_ transaction: Transaction) async {
-        if transaction.productType == .consumable {
-            // 消耗型逻辑：加金币
-            // ⚠️ 真实项目中，这里应该把 transactionID 发给服务器做校验，由服务器加币
-            // 本地简单的防重处理可以基于 transaction.id
-            coinBalance += 100
-            log("消耗型商品到账，金币 +100，交易 ID: \(transaction.id)")
-        } else {
-            // 非消耗型 / 订阅
-            if transaction.revocationDate == nil {
-                // 正常购买
-                purchasedProductIDs.insert(transaction.productID)
-                log("已激活商品: \(transaction.productID)")
-                if transaction.productType == .autoRenewable {
-                    await checkSubscriptionDetails(transaction)
-                }
-            } else {
-                // 被退款/撤销了
-                purchasedProductIDs.remove(transaction.productID)
-                subscriptionStatus = "已退款/撤销"
-                log("交易已撤销: \(transaction.productID)")
-            }
         }
     }
     
@@ -312,4 +338,61 @@ class StoreKitManager: ObservableObject {
         let time = formatter.string(from: Date())
         print("[StoreKit] [\(time)] \(message)")
     }
+    
+    // 辅助方法：打印产品详情
+    func displayProductInfo(_ product: Product) {
+        print("━━━━━━━━━━━━━━━━━━━━━━")
+        print("商品 ID: \(product.id)")
+        print("名称: \(product.displayName)")
+        print("描述: \(product.description)")
+        print("价格: \(product.displayPrice)")  // 已格式化的价格字符串
+        print("价格数值: \(product.price)")     // Decimal 类型
+        print("货币代码: \(product.priceFormatStyle.currencyCode)")
+        print("类型: \(product.type)")
+        print("支持家庭共享: \(product.isFamilyShareable ? "是" : "否")")
+
+        // 订阅专属信息
+        if let subscription = product.subscription {
+            print("━━━ 订阅信息 ━━━")
+            print("订阅组 ID: \(subscription.subscriptionGroupID)")
+            print("订阅周期: \(periodText(subscription.subscriptionPeriod, count: 1))")
+
+            // 介绍性优惠（新用户优惠）
+            if let introOffer = subscription.introductoryOffer {
+                let introDescription = periodText(introOffer.period, count: introOffer.periodCount)
+                print("新用户优惠: \(introOffer.displayPrice) • \(introDescription) • \(introOffer.paymentMode)")
+            } else {
+                print("新用户优惠: 无")
+            }
+
+            // 推介优惠
+            if subscription.promotionalOffers.isEmpty {
+                print("推介优惠: 无")
+            } else {
+                print("推介优惠 \(subscription.promotionalOffers.count) 个：")
+                for offer in subscription.promotionalOffers {
+                    let description = periodText(offer.period, count: offer.periodCount)
+                    print("  - \(offer.id): \(offer.displayPrice) • \(description) • \(offer.paymentMode)")
+                }
+            }
+        } else {
+            print("非订阅商品，无订阅附加信息")
+        }
+
+        print("━━━━━━━━━━━━━━━━━━━━━━")
+    }
+
+    private func periodText(_ period: Product.SubscriptionPeriod, count: Int) -> String {
+        let unit: String
+        switch period.unit {
+        case .day: unit = "天"
+        case .week: unit = "周"
+        case .month: unit = "月"
+        case .year: unit = "年"
+        @unknown default: unit = "周期"
+        }
+        let base = period.value > 1 ? "\(period.value)\(unit)" : unit
+        return count > 1 ? "\(count) x \(base)" : base
+    }
+
 }

@@ -30,7 +30,7 @@
       "type" : "Consumable"
     },
     {
-      "displayPrice" : "9.99",
+      "displayPrice" : "19.99",
       "familyShareable" : false,
       "internalID" : "0BCF3BD2",
       "localizations" : [
@@ -76,7 +76,7 @@
           ],
           "displayPrice" : "0.99",
           "familyShareable" : false,
-          "groupNumber" : 1,
+          "groupNumber" : 2,
           "internalID" : "4D6DA8C9",
           "introductoryOffer" : {
             "internalID" : "DF91CF33",
@@ -93,6 +93,34 @@
           "productID" : "com.myapp.pro.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Monthly Sub",
+          "subscriptionGroupID" : "E153A563",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "9.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "1F0690B0",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "订阅一年，到期自动续费",
+              "displayName" : "年卡",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.myapp.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Yearly Sub",
           "subscriptionGroupID" : "E153A563",
           "type" : "RecurringSubscription",
           "winbackOffers" : [

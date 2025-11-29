@@ -141,6 +141,10 @@ struct ContentView: View {
             buyButton(for: product)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            storeKit.displayProductInfo(product)
+        }
     }
 
     private func sectionCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
